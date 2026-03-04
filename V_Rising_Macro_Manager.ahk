@@ -53,7 +53,7 @@ global supportHookInstalled := false
 global txtStatus
 global statusTimerRunning := false
 global APP_NAME := "V Rising Macro Manager"
-global APP_VERSION := "v2.2.2"
+global APP_VERSION := "v2.3.0"
 A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
