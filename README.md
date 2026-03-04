@@ -69,15 +69,9 @@ environment.)_
 
 # UI Preview
 
----
-
-Dark Mode Light Mode
-
----
-
-`<img src="assets/darkMode.png" width="100%">`{=html} `<img src="assets/lightMode.png" width="100%">`{=html}
-
----
+| Dark Mode                                    | Light Mode                                    |
+| -------------------------------------------- | --------------------------------------------- |
+| <img src="assets/darkMode.png" width="100%"> | <img src="assets/lightMode.png" width="100%"> |
 
 ---
 
