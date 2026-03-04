@@ -39,6 +39,9 @@ global txtFooter
 global picLogo
 global txtStatus
 global statusTimerRunning := false
+global APP_NAME := "V Rising Macro Manager"
+global APP_VERSION := "v2.2.0"
+A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
 global bindings := []              ; Array of binding objects
@@ -607,7 +610,7 @@ BuildGui() {
     themedOther := []
 
     ; Borderless window (custom title bar)
-    mainGui := Gui("+Resize -Caption +Border", "V Rising Macro Manager")
+    mainGui := Gui("+Resize -Caption +Border", APP_NAME " " APP_VERSION)
     mainGui.SetFont("s10")
 
     y0 := titleBarH + 8
@@ -621,9 +624,9 @@ BuildGui() {
     logoPath := A_ScriptDir "\bloodcraft_resized.png"
     if FileExist(logoPath) {
         picLogo := mainGui.AddPicture("x10 y1 w32 h32", logoPath)
-        hdrTitle := mainGui.AddText("x48 y7 w520 h20 0x200", "V Rising Macro Manager")
+        hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", APP_NAME " " APP_VERSION)
     } else {
-        hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", "V Rising Macro Manager")
+        hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", APP_NAME " " APP_VERSION)
     }
     hdrTitle.SetFont("s12 bold")
 
