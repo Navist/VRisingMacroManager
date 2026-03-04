@@ -13,8 +13,8 @@ global chatKey := "Enter"
 global sendDelay := 50
 global themeName := "Bloodcraft"   ; "Bloodcraft" or "Light"
 
-global gTitleLogoPath := A_ScriptDir "\bloodcraft_resized.ico"
-global gHelpLogoPath := A_ScriptDir "\bloodcraft_resized.png"  ; prefer PNG for panel logo (optional)
+global gTitleLogoPath := A_ScriptDir "\assets\bloodcraft_resized.ico"
+global gHelpLogoPath := A_ScriptDir "\assets\bloodcraft_resized.png"  ; prefer PNG for panel logo (optional)
 
 global iniPath := A_ScriptDir "\vrising_macros.ini"
 
@@ -771,7 +771,7 @@ BuildGui() {
     txtActionHelp.SetFont("s9")
     themedText.Push(txtActionHelp)
 
-    logoPath := A_ScriptDir "\bloodcraft_resized.ico"  ; prefer PNG for in-panel logo
+    logoPath := A_ScriptDir "\assets\bloodcraft_resized.ico"  ; prefer PNG for in-panel logo
     if FileExist(logoPath) {
         ; Position under Action Help box (adjust x/y/w/h to taste)
         picHelpLogo := mainGui.AddPicture("x725 y" y0 + 200 " w220 h180 +BackgroundTrans", logoPath)
