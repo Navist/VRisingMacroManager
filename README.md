@@ -13,15 +13,9 @@ A Bloodcraft-themed AutoHotkey v2 macro manager for V Rising that lets players c
 
 ## UI Preview
 
-<p align="center">
-  <b>Dark Mode</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Light Mode</b>
-</p>
-
-<p align="center">
-  <img src="assets/darkMode.png" width="48%">
-  <img src="assets/lightMode.png" width="48%">
-</p>
+| Dark Mode                                    | Light Mode                                    |
+| -------------------------------------------- | --------------------------------------------- |
+| <img src="assets/darkMode.png" width="100%"> | <img src="assets/lightMode.png" width="100%"> |
 
 ## Requirements
 
