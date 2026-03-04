@@ -12,24 +12,33 @@
 global chatKey := "Enter"
 global sendDelay := 50
 global themeName := "Bloodcraft"   ; "Bloodcraft" or "Light"
+
+global gTitleLogoPath := A_ScriptDir "\bloodcraft_resized.ico"
+global gHelpLogoPath := A_ScriptDir "\bloodcraft_resized.png"  ; prefer PNG for panel logo (optional)
+
 global iniPath := A_ScriptDir "\vrising_macros.ini"
-if FileExist(A_ScriptDir "\bloodcraft_resized.ico")
-    TraySetIcon(A_ScriptDir "\bloodcraft_resized.ico")
+
+if FileExist(gTitleLogoPath)
+    TraySetIcon(gTitleLogoPath)
 
 ; Theming buckets
 global themedText := []      ; text labels
 global themedInputs := []    ; edit boxes
 global themedOther := []     ; checkbox, ddl, buttons
 global btnTheme  ; theme toggle button (needs text update on theme change)
-global pnlLeft, pnlRight, accentLine
-global hdrGlow  ; optional accent glow under title bar (only on Bloodcraft theme)
 
 global gameButtons := []          ; holds the Text-controls that act like buttons
 global hoveredBtn := 0            ; currently hovered control (GuiCtrl)
+global tooltipMap := Map()        ; ctrlHwnd -> tooltip text
+global tooltipHoverHwnd := 0      ; ctrl currently hovered for tooltip
+global tooltipArmed := false      ; waiting to show tooltip
+global tooltipDelayMs := 650      ; hover delay before tooltip appears
 
 ; Custom titlebar globals
 global hdrBar, hdrTitle, btnMin, btnClose, hdrSep
 global titleBarH := 34
+global y0 := titleBarH + 8
+global y0Offset := 355  ; vertical offset for the bottom buttons (Save, Load, Rebind, Add, Update, Delete)
 
 ; UI globals
 global mainGui, lv
@@ -37,10 +46,14 @@ global edtHotkey, ddlAction, chkEnabled, edtCommands
 global edtChatKey, edtDelay
 global txtFooter
 global picLogo
+global picSupport
+global txtSupport
+global supportPopupHwnd := 0
+global supportHookInstalled := false
 global txtStatus
 global statusTimerRunning := false
 global APP_NAME := "V Rising Macro Manager"
-global APP_VERSION := "v2.2.0"
+global APP_VERSION := "v2.2.2"
 A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
@@ -61,22 +74,13 @@ SendChat(msg) {
     Send "{Enter}"
 }
 
-PreSendChat(msg) {
+PrefillChat(msg) {
     global chatKey, sendDelay
     if (msg = "")
         return
     Send "{" chatKey "}"
     Sleep sendDelay
     Send msg
-}
-
-GrabBuffs(lines) {
-    global sendDelay
-    for _, line in lines {
-        if (Trim(line) != "")
-            SendChat(line)
-        Sleep sendDelay
-    }
 }
 
 ; =========================
@@ -98,16 +102,18 @@ RunBinding(i) {
     cmds := b.commands
 
     switch b.action {
+        ; SendChat handles multi-line sequences (one chat per line)
         case "SendChat":
-            SendChat(cmds.Length >= 1 ? cmds[1] : "")
-        case "PreSendChat":
-            PreSendChat(cmds.Length >= 1 ? cmds[1] : "")
-        case "StashNGrab":
-            SendChat(cmds.Length >= 1 ? cmds[1] : "")
-            Sleep sendDelay
-            SendChat(cmds.Length >= 2 ? cmds[2] : "")
-        case "GrabBuffs":
-            GrabBuffs(cmds)
+            for _, line in cmds {
+                if (Trim(line) != "")
+                    SendChat(line)
+                Sleep sendDelay
+            }
+
+            ; PrefillChat opens chat and types without sending
+        case "PrefillChat":
+            PrefillChat(cmds.Length >= 1 ? cmds[1] : "")
+
         default:
             return
     }
@@ -302,6 +308,7 @@ GetThemePalette(name) {
             "panel", "161622",     ; panel containers
             "text", "E8E8E8",
             "muted", "9A9AA3",
+            "divider", "3A3A45",    ; separator lines (visible on dark)
             "accent", "C1121F",    ; blood red
             "accent2", "2A0A0E",   ; deep blood
             "editBg", "101018",    ; inputs slightly darker
@@ -317,6 +324,7 @@ GetThemePalette(name) {
             "panel", "FFFFFF",
             "text", "111111",
             "muted", "333333",
+            "divider", "C9C9C9",
             "accent", "8B0000",
             "accent2", "5A0000",
             "editBg", "FFFFFF",
@@ -332,51 +340,26 @@ GetThemePalette(name) {
 ApplyTheme() {
     global mainGui, lv, themeName
     global themedText, themedInputs, themedOther, txtFooter
-    global hdrBar, hdrTitle, btnMin, btnClose, hdrSep, btnTheme, hdrGlow
-    global pnlLeft, pnlRight, accentLine
-    global uiSepTop, uiSepMid, uiSepBottom
+    global hdrBar, hdrTitle, btnMin, btnClose, hdrSep, btnTheme
+
+    global uiSepTop, uiSepMid, uiSepBottom, uiSepHelp
 
     pal := GetThemePalette(themeName)
 
     mainGui.BackColor := pal["bg"]
     mainGui.SetFont("s10 c" pal["text"], pal["font"])
 
-    ; Panel styling
-    if IsSet(pnlLeft)
-        try pnlLeft.Opt("Background" pal["panel"])
-    if IsSet(pnlRight)
-        try pnlRight.Opt("Background" pal["panel"])
-    if IsSet(accentLine)
-        try accentLine.Opt("Background" pal["accent"])
-
-    ; Divider color: muted in light, blood in bloodcraft (subtle)
-    divCol := (themeName = "Bloodcraft") ? pal["accent2"] : pal["muted"]
+    ; Divider color: ensure separators are visible (especially in Bloodcraft / dark)
+    divCol := pal.Has("divider") ? pal["divider"] : pal["muted"]
 
     if IsSet(uiSepTop)
         try uiSepTop.Opt("Background" divCol)
     if IsSet(uiSepMid)
         try uiSepMid.Opt("Background" divCol)
+    if IsSet(uiSepHelp)
+        try uiSepHelp.Opt("Background" divCol)
     if IsSet(uiSepBottom)
         try uiSepBottom.Opt("Background" divCol)
-
-    try pnlLeft.Opt("Border")
-    try pnlRight.Opt("Border")
-
-    ; Accent line (subtle)
-    if (themeName = "Bloodcraft") {
-        try accentLine.Opt("Background" pal["accent"])
-    }
-    else {
-        try accentLine.Opt("Background" pal["accent2"])
-    }
-
-    if IsSet(hdrGlow) {
-        if (themeName = "Bloodcraft") {
-            try hdrGlow.Opt("Background" pal["accent2"])
-        } else {
-            try hdrGlow.Opt("Background" pal["panel"])
-        }
-    }
 
     ; Custom title bar
     try hdrBar.Opt("Background" pal["panel"])
@@ -442,6 +425,27 @@ ApplyTheme() {
 }
 
 ; =========================
+; =========================
+; Action helper text
+; =========================
+UpdateActionHelpText() {
+    global ddlAction, txtActionHelp
+    if !IsSet(ddlAction) || !IsSet(txtActionHelp)
+        return
+
+    act := ddlAction.Text
+    switch act {
+        case "SendChat":
+            txtActionHelp.Text :=
+            "SendChat`n`n• Sends ALL command lines`n• One chat message per line`n• Uses your Chat Key + delay settings"
+        case "PrefillChat":
+            txtActionHelp.Text :=
+            "PrefillChat`n`n• Opens chat and types ONLY the first line`n• Does NOT press Enter`n• Lets you edit before sending"
+        default:
+            txtActionHelp.Text := ""
+    }
+}
+
 ; GUI helpers
 ; =========================
 DragWindow(hwnd) {
@@ -455,6 +459,23 @@ ToggleTheme() {
     UpdateThemeButtonText()
     SaveToIni()
     ClearHoveredButton()
+}
+
+global _settingsApplyTimerArmed := false
+
+ScheduleSettingsApply() {
+    global _settingsApplyTimerArmed
+    _settingsApplyTimerArmed := true
+    SetTimer ApplySettingsDebounced, -700
+}
+
+ApplySettingsDebounced() {
+    global _settingsApplyTimerArmed
+    if (!_settingsApplyTimerArmed)
+        return
+    _settingsApplyTimerArmed := false
+    ApplySettings(true)
+    SetStatus("Settings applied")
 }
 
 ApplySettings(rebind := true) {
@@ -485,6 +506,48 @@ CreateGameButton(gui, x, y, w, h, text, callback, statusMsg := "") {
     return btn
 }
 
+; =========================
+; Tooltip helpers (hover-tooltips)
+; =========================
+AddTooltip(ctrl, text) {
+    global tooltipMap
+    try tooltipMap[ctrl.Hwnd] := text
+}
+
+HideTooltip() {
+    global tooltipHoverHwnd, tooltipArmed
+    tooltipHoverHwnd := 0
+    tooltipArmed := false
+    ToolTip()
+}
+
+ArmTooltip(gui, ctrlHwnd) {
+    global tooltipMap, tooltipHoverHwnd, tooltipArmed, tooltipDelayMs
+    if (!tooltipMap.Has(ctrlHwnd)) {
+        HideTooltip()
+        return
+    }
+    if (tooltipHoverHwnd = ctrlHwnd && tooltipArmed)
+        return
+    tooltipHoverHwnd := ctrlHwnd
+    tooltipArmed := true
+    SetTimer ShowTooltip.Bind(gui), -tooltipDelayMs
+}
+
+ShowTooltip(gui) {
+    global tooltipMap, tooltipHoverHwnd, tooltipArmed
+    if (!tooltipArmed || tooltipHoverHwnd = 0)
+        return
+    if (WinActive("ahk_id " gui.Hwnd) = 0)
+        return
+    MouseGetPos , , &winHwnd, &ctrlHwnd, 2
+    if (winHwnd != gui.Hwnd || ctrlHwnd != tooltipHoverHwnd) {
+        HideTooltip()
+        return
+    }
+    try ToolTip(tooltipMap[ctrlHwnd])
+}
+
 EnableButtonHover(gui) {
     ; WM_MOUSEMOVE = 0x200
     OnMessage(0x200, WM_MOUSEMOVE_Hover.Bind(gui))
@@ -502,6 +565,9 @@ WM_MOUSEMOVE_Hover(gui, wParam, lParam, msg, hwnd) {
         ClearHoveredButton()
         return
     }
+
+    ; Arm tooltip for any control that has one
+    ArmTooltip(gui, ctrlHwnd)
 
     ; Find which of our "game buttons" matches ctrlHwnd
     found := 0
@@ -542,6 +608,7 @@ SetHoveredButton(btn) {
 
 ClearHoveredButton() {
     global hoveredBtn, themeName
+    HideTooltip()
     if (!IsSet(hoveredBtn) || !hoveredBtn)
         return
 
@@ -598,11 +665,11 @@ BuildGui() {
     global edtHotkey, ddlAction, chkEnabled, edtCommands
     global edtChatKey, edtDelay
     global chatKey, sendDelay, themeName, btnTheme
-    global hdrBar, hdrTitle, btnMin, btnClose, hdrSep, titleBarH, hdrGlow
+    global hdrBar, hdrTitle, btnMin, btnClose, hdrSep, titleBarH
     global txtFooter
     global themedText, themedInputs, themedOther
     global picLogo
-    ; global pnlLeft, pnlRight, accentLine
+    global y0, y0Offset
 
     ; Reset theming buckets (prevents duplicates if you ever rebuild the GUI)
     themedText := []
@@ -610,35 +677,34 @@ BuildGui() {
     themedOther := []
 
     ; Borderless window (custom title bar)
-    mainGui := Gui("+Resize -Caption +Border", APP_NAME " " APP_VERSION)
+    mainGui := Gui("-Caption +Border", APP_NAME " " APP_VERSION)
     mainGui.SetFont("s10")
 
-    y0 := titleBarH + 8
-    ; Background panels (these sit behind controls)
-    pnlLeft := mainGui.AddText("x8 y" y0 + 34 " w448 h292", "")
-    pnlRight := mainGui.AddText("x458 y" y0 + 34 " w254 h292", "")
-    accentLine := mainGui.AddText("x8 y" y0 + 34 " w704 h2", "")
+    ; Move Save INI, Load INI, Rebind Hotkeys, Add, Update, Delete as one unit with a single y0 offset
 
     ; ---- Custom Bloodcraft Title Bar ----
-    hdrBar := mainGui.AddText("x0 y0 w640 h" titleBarH " 0x200", "")  ; stop before buttons
-    logoPath := A_ScriptDir "\bloodcraft_resized.png"
-    if FileExist(logoPath) {
-        picLogo := mainGui.AddPicture("x10 y1 w32 h32", logoPath)
-        hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", APP_NAME " " APP_VERSION)
+    hdrBar := mainGui.AddText("x0 y0 w640 h" titleBarH " 0x200", "")
+
+    if FileExist(gTitleLogoPath) {
+        picLogo := mainGui.AddPicture("x10 y1 w38 h32 +BackgroundTrans", gTitleLogoPath)
     } else {
-        hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", APP_NAME " " APP_VERSION)
+        picLogo := ""  ; sentinel (non-control)
     }
+
+    hdrTitle := mainGui.AddText("x12 y7 w520 h20 0x200", APP_NAME " " APP_VERSION)
     hdrTitle.SetFont("s12 bold")
 
     btnMin := mainGui.AddButton("x640 y6 w30 h22", "–")
     btnClose := mainGui.AddButton("x676 y6 w30 h22", "X")
+    AddTooltip(btnMin, "Minimize window")
+    AddTooltip(btnClose, "Close app")
     btnMin.OnEvent("Click", (*) => WinMinimize("ahk_id " mainGui.Hwnd))
     btnClose.OnEvent("Click", (*) => ExitApp())
 
     hdrBar.OnEvent("Click", (*) => DragWindow(mainGui.Hwnd))
     hdrTitle.OnEvent("Click", (*) => DragWindow(mainGui.Hwnd))
 
-    hdrSep := mainGui.AddText("x0 y" titleBarH " w720 h2", "")
+    hdrSep := mainGui.AddText("x0 y" titleBarH " w960 h2", "")
 
     ; ---- Settings row ----
     t := mainGui.AddText("x10 y" y0 + 4 " w70", "Chat Key:")
@@ -653,11 +719,20 @@ BuildGui() {
     edtDelay := mainGui.AddEdit("x255 y" y0 + 2 " w70", sendDelay)
     themedInputs.Push(edtDelay)
 
+    ; Auto-apply settings shortly after you stop typing
+    edtChatKey.OnEvent("Change", (*) => ScheduleSettingsApply())
+    edtDelay.OnEvent("Change", (*) => ScheduleSettingsApply())
+
     btnApplySettings := CreateGameButton(mainGui, 360, y0 + 2, 90, 24, "Apply", (*) => ApplySettings())
     btnTheme := CreateGameButton(mainGui, 465, y0 + 2, 160, 24, "", (*) => ToggleTheme())
     UpdateThemeButtonText()
 
-    sepTop := mainGui.AddText("x10 y" y0 + 34 " w704 h1", "")
+    ; Tooltips
+    AddTooltip(btnApplySettings,
+        "Apply`n`nApplies Chat Key + Delay immediately.`n(Also auto-applies after you stop typing.)")
+    AddTooltip(btnTheme, "Toggle Theme`n`nSwitch between Bloodcraft Dark and Light Mode.")
+
+    sepTop := mainGui.AddText("x10 y" y0 + 34 " w944 h1", "")
     global uiSepTop := sepTop
 
     sepMid := mainGui.AddText("x458 y" y0 + 42 " w1 h300", "")
@@ -678,10 +753,38 @@ BuildGui() {
     t := mainGui.AddText("x465 y" y0 + 76 " w60", "Action:")
     themedText.Push(t)
 
-    ddlAction := mainGui.AddDropDownList("x525 y" y0 + 74 " w180", ["SendChat", "PreSendChat", "StashNGrab",
-        "GrabBuffs"])
+    ddlAction := mainGui.AddDropDownList("x525 y" y0 + 74 " w180", ["SendChat", "PrefillChat"])
     themedOther.Push(ddlAction)
 
+    ; --- Right-side Action Help panel (keeps editor compact) ---
+    ; Shows context/help without pushing the editor controls downward.
+    global txtActionHelp, lblHelpTitle, sepHelp
+    sepHelp := mainGui.AddText("x715 y" y0 + 42 " w1 h300", "")
+    global uiSepHelp := sepHelp
+    themedText.Push(sepHelp)
+
+    lblHelpTitle := mainGui.AddText("x725 y" y0 + 46 " w220", "Action Help")
+    lblHelpTitle.SetFont("s9 bold")
+    themedText.Push(lblHelpTitle)
+
+    txtActionHelp := mainGui.AddText("x725 y" y0 + 68 " w220 h120 +Border", "")
+    txtActionHelp.SetFont("s9")
+    themedText.Push(txtActionHelp)
+
+    logoPath := A_ScriptDir "\bloodcraft_resized.ico"  ; prefer PNG for in-panel logo
+    if FileExist(logoPath) {
+        ; Position under Action Help box (adjust x/y/w/h to taste)
+        picHelpLogo := mainGui.AddPicture("x725 y" y0 + 200 " w220 h180 +BackgroundTrans", logoPath)
+
+        ; Optional: clicking logo opens support menu
+        picHelpLogo.OnEvent("Click", ShowSupportMenu)
+        picHelpLogo.OnEvent("ContextMenu", ShowSupportMenu)
+    }
+
+    ddlAction.OnEvent("Change", (*) => UpdateActionHelpText())
+    UpdateActionHelpText()
+
+    ; Enabled (moved up now that helper text is on the right)
     chkEnabled := mainGui.AddCheckbox("x525 y" y0 + 104 " w24", " ")
     themedOther.Push(chkEnabled)
     chkEnabled.Value := 1
@@ -689,25 +792,35 @@ BuildGui() {
     lblEnabled := mainGui.AddText("x550 y" y0 + 104 " w120", "Enabled")
     themedText.Push(lblEnabled)
 
-    t := mainGui.AddText("x465 y" y0 + 136 " w240", "Commands (one per line):")
+    t := mainGui.AddText("x465 y" y0 + 130 " w240", "Commands (one per line):")
     themedText.Push(t)
 
-    edtCommands := mainGui.AddEdit("x465 y" y0 + 156 " w240 h190 -Wrap +VScroll", "")
+    ; Taller commands box (reclaimed vertical space)
+    edtCommands := mainGui.AddEdit("x465 y" y0 + 150 " w240 h198 -Wrap +VScroll", "")
     themedInputs.Push(edtCommands)
 
     ; ---- Buttons ----
 
-    btnAdd := CreateGameButton(mainGui, 465, y0 + 356, 75, 24, "Add", (*) => AddBindingFromEditor(),
+    btnAdd := CreateGameButton(mainGui, 465, y0 + y0Offset, 75, 24, "Add", (*) => AddBindingFromEditor(),
     "Added new binding")
-    btnUpdate := CreateGameButton(mainGui, 545, y0 + 356, 75, 24, "Update", (*) => UpdateBindingFromEditor(),
+    btnUpdate := CreateGameButton(mainGui, 545, y0 + y0Offset, 75, 24, "Update", (*) => UpdateBindingFromEditor(),
     "Updated binding")
-    btnDelete := CreateGameButton(mainGui, 625, y0 + 356, 80, 24, "Delete", (*) => DeleteSelected(),
+    btnDelete := CreateGameButton(mainGui, 625, y0 + y0Offset, 80, 24, "Delete", (*) => DeleteSelected(),
     "Deleted selected binding")
 
-    btnSave := CreateGameButton(mainGui, 10, y0 + 356, 90, 24, "Save INI", (*) => SaveToIni(), "Saved to INI")
-    btnLoad := CreateGameButton(mainGui, 105, y0 + 356, 90, 24, "Load INI", (*) => LoadFromIni(), "Loaded from INI")
-    btnRebind := CreateGameButton(mainGui, 200, y0 + 356, 120, 24, "Rebind Hotkeys", (*) => (ApplySettings(),
+    AddTooltip(btnAdd, "Add`n`nCreates a NEW binding using the editor fields on the right.")
+    AddTooltip(btnUpdate, "Update`n`nOverwrites the selected row using the editor fields on the right.")
+    AddTooltip(btnDelete, "Delete`n`nRemoves the selected binding row.")
+
+    btnSave := CreateGameButton(mainGui, 10, y0 + y0Offset, 90, 24, "Save INI", (*) => SaveToIni(), "Saved to INI")
+    btnLoad := CreateGameButton(mainGui, 105, y0 + y0Offset, 90, 24, "Load INI", (*) => LoadFromIni(),
+    "Loaded from INI")
+    btnRebind := CreateGameButton(mainGui, 200, y0 + y0Offset, 120, 24, "Rebind Hotkeys", (*) => (ApplySettings(),
     RegisterAllHotkeys()))
+
+    AddTooltip(btnSave, "Save INI`n`nSaves bindings + settings to vrising_macros.ini.")
+    AddTooltip(btnLoad, "Load INI`n`nLoads bindings + settings from vrising_macros.ini.")
+    AddTooltip(btnRebind, "Rebind Hotkeys`n`nRe-registers enabled hotkeys. Use this if hotkeys stop responding.")
 
     themedOther.Push(btnSave), themedOther.Push(btnLoad), themedOther.Push(btnRebind)
 
@@ -716,48 +829,68 @@ BuildGui() {
     ApplyTheme()))
     btnRebind.OnEvent("Click", (*) => (ApplySettings(), RegisterAllHotkeys()))
 
-    sepBottom := mainGui.AddText("x10 y" y0 + 390 " w704 h1", "")
+    sepBottom := mainGui.AddText("x10 y" y0 + y0Offset + 34 " w944 h1", "")
     global uiSepBottom := sepBottom
 
     ; Footer (created BEFORE ApplyTheme so it's styled)
-    txtFooter := mainGui.AddText("x10 y" y0 + 392 " w500", "Created by Navist • AI-assisted")
+    txtFooter := mainGui.AddText("x10 y" y0 + y0Offset + 36 " w500", "Created by Navist • AI-assisted")
     themedText.Push(txtFooter)
 
     ; Bottom-right status text (starts hidden)
-    txtStatus := mainGui.AddText("x520 y" y0 + 392 " w190 Right", "")
+    txtStatus := mainGui.AddText("x520 y" y0 + y0Offset + 36 " w190 Right", "")
     themedText.Push(txtStatus)
     txtStatus.Visible := false
+
+    iconDir := A_ScriptDir "\icons\"
+    picSupport := mainGui.AddPicture("x765 y" y0 + y0Offset + 36 " w20 h18 +BackgroundTrans", iconDir "support_heart.png"
+    )
+    picSupport.OnEvent("Click", ShowSupportMenu)
+    picSupport.OnEvent("ContextMenu", ShowSupportMenu)
+
+    txtSupport := mainGui.AddText("x790 y" y0 + y0Offset + 36 " w95 Center cRed", "Support Navist")
+    txtSupport.SetFont("Underline")
+    txtSupport.OnEvent("Click", ShowSupportMenu)
+    txtSupport.OnEvent("ContextMenu", ShowSupportMenu)
 
     mainGui.OnEvent("Close", (*) => ExitApp())
 
     ApplyTheme()
     mainGui.OnEvent("Size", GuiResized)
-    mainGui.Show("w720 h450")
+    mainGui.Show("w960 h450")
     EnableButtonHover(mainGui)
     ForceBorderless(mainGui.Hwnd)
     RemoveDwmFrame(mainGui.Hwnd)
+    ; after mainGui.Show(...) / ForceBorderless / RemoveDwmFrame
+    if IsSet(picHelpLogo) {
+        try picHelpLogo.MoveDraw(picHelpLogo.X, picHelpLogo.Y, picHelpLogo.W, picHelpLogo.H)
+    }
 
 }
 
-GuiResized(thisGui, minMax, w, h) {
-    global hdrBar, hdrSep, hdrGlow, hdrTitle, btnMin, btnClose, titleBarH
-    global picLogo
+LayoutTitlebar(w, h) {
+    global hdrBar, hdrSep, hdrTitle, btnMin, btnClose, titleBarH, picLogo
 
     safe := 88
 
+    ; bar + separator
     try hdrBar.Move(0, 0, w - safe, titleBarH)
     try hdrSep.Move(0, titleBarH, w, 2)
-    try hdrGlow.Move(0, titleBarH + 2, w, 1)
 
-    if IsSet(picLogo) {
-        try picLogo.Move(10, 1, 32, 32)
+    ; logo + title
+    if (picLogo && IsObject(picLogo)) {
+        try picLogo.Move(10, 1, 38, 32)
         try hdrTitle.Move(48, 7, w - (safe + 60), 20)
     } else {
         try hdrTitle.Move(12, 7, w - (safe + 24), 20)
     }
 
+    ; window buttons
     try btnMin.Move(w - 80, 6, 30, 22)
     try btnClose.Move(w - 44, 6, 30, 22)
+}
+
+GuiResized(thisGui, minMax, w, h) {
+    LayoutTitlebar(w, h)
 }
 
 UpdateThemeButtonText() {
@@ -821,6 +954,7 @@ LoadSelectedIntoEditor() {
     b := bindings[idx]
 
     edtHotkey.Text := b.hotkey
+
     ddlAction.Text := b.action
     chkEnabled.Value := b.enabled ? 1 : 0
 
@@ -841,15 +975,9 @@ ReadEditorBinding() {
         throw Error("Hotkey is required.")
 
     switch action {
-        case "SendChat", "PreSendChat":
+        case "SendChat", "PrefillChat":
             if (cmds.Length < 1)
                 throw Error(action " needs at least 1 command line.")
-        case "StashNGrab":
-            if (cmds.Length < 2)
-                throw Error("StashNGrab needs 2 command lines (stash, then pull).")
-        case "GrabBuffs":
-            if (cmds.Length < 1)
-                throw Error("GrabBuffs needs at least 1 command line.")
         default:
             throw Error("Unknown action: " action)
     }
@@ -883,6 +1011,7 @@ AddBindingFromEditor() {
         bindings.Push(b)
         RefreshListView()
         RegisterAllHotkeys()
+        SaveToIni()
     } catch as e {
         MsgBox e.Message, "Add Binding", "Icon!"
     }
@@ -919,6 +1048,7 @@ UpdateBindingFromEditor() {
         bindings[idx] := b
         RefreshListView()
         RegisterAllHotkeys()
+        SaveToIni()
         lv.Modify(idx, "Select Focus")
     } catch as e {
         MsgBox e.Message, "Update Binding", "Icon!"
@@ -937,6 +1067,7 @@ DeleteSelected() {
         bindings.RemoveAt(idx)
         RefreshListView()
         RegisterAllHotkeys()
+        SaveToIni()
     }
 }
 
@@ -949,13 +1080,12 @@ SeedDefaultsIfEmpty() {
         return
 
     bindings := []
-    bindings.Push({ enabled: true, hotkey: "F1", action: "PreSendChat", commands: ['.stp tpr '] })
-    bindings.Push({ enabled: true, hotkey: "F2", action: "SendChat", commands: ['.stp tpa '] })
-    bindings.Push({ enabled: true, hotkey: "F3", action: "StashNGrab", commands: ['.stash', '.pull "Blood Essence" 200'] })
+    bindings.Push({ enabled: true, hotkey: "F1", action: "PrefillChat", commands: ['.stp tpr '] })
+    bindings.Push({ enabled: true, hotkey: "F2", action: "PrefillChat", commands: ['.stp tpa '] })
+    bindings.Push({ enabled: true, hotkey: "F3", action: "SendChat", commands: ['.stash', '.pull "Blood Essence" 200'] })
     bindings.Push({ enabled: true, hotkey: "F4", action: "SendChat", commands: ['.stp tp shop'] })
     bindings.Push({ enabled: true, hotkey: "F5", action: "SendChat", commands: ['.stp tp home'] })
-
-    bindings.Push({ enabled: true, hotkey: "F7", action: "GrabBuffs", commands: [
+    bindings.Push({ enabled: true, hotkey: "F7", action: "SendChat", commands: [
         '.pull "Enchanted Brew" 4',
         '.pull "Brew of Ferocity" 4',
         '.pull "Potion of Rage" 4',
@@ -980,3 +1110,93 @@ if (!LoadFromIni())
 BuildGui()
 RefreshListView()
 RegisterAllHotkeys()
+
+ShowSupportMenu(*) {
+    global mainGui, supportPopupHwnd, supportHookInstalled
+
+    static supportGui := 0
+    static iconDir := A_ScriptDir "\icons\"
+    static popupW := 170
+    static rowH := 26
+    static padX := 10
+    static padY := 10
+
+    ; Create once
+    if !supportGui {
+        supportGui := Gui("-Caption +ToolWindow +AlwaysOnTop")
+        supportGui.BackColor := "202020"
+
+        ; Attach to main window so it stays on top of it
+        try supportGui.Opt("+Owner" mainGui.Hwnd)
+
+        y := padY
+
+        AddItem(name, iconFile, url) {
+
+            pic := supportGui.AddPicture("x" padX " y" y " w16 h16 +BackgroundTrans", iconFile)
+            txt := supportGui.AddText("x" (padX + 24) " y" (y - 2) " w" (popupW - (padX + 34)) " cWhite", name)
+
+            ; Clicks open link and close popup
+            pic.OnEvent("Click", (*) => (Run(url), supportGui.Hide()))
+            txt.OnEvent("Click", (*) => (Run(url), supportGui.Hide()))
+
+            ; Right click also opens link
+            pic.OnEvent("ContextMenu", (*) => (Run(url), supportGui.Hide()))
+            txt.OnEvent("ContextMenu", (*) => (Run(url), supportGui.Hide()))
+
+            y += rowH
+        }
+
+        AddItem("PayPal", iconDir "paypal.png", "https://www.paypal.com/paypalme/Navist")
+        AddItem("Patreon", iconDir "patreon.png", "https://www.patreon.com/cw/Navist")
+        AddItem("Ko-Fi", iconDir "kofi.png", "https://ko-fi.com/Navist")
+        AddItem("GitHub", iconDir "github.png", "https://github.com/Navist")
+
+        ; Remember hwnd for click-away handler
+        supportPopupHwnd := supportGui.Hwnd
+
+        ; Let Esc close it (supported GUI event)
+        supportGui.OnEvent("Escape", (*) => supportGui.Hide())
+
+        ; Install click-away handler once
+        if !supportHookInstalled {
+            supportHookInstalled := true
+            OnMessage(0x201, SupportPopup_ClickAway) ; WM_LBUTTONDOWN
+            OnMessage(0x204, SupportPopup_ClickAway) ; WM_RBUTTONDOWN
+        }
+
+        ; Pre-calc size (AutoSize) once
+        supportGui.Show("Hide AutoSize")
+    }
+
+    ; Toggle: if already visible, hide and stop
+    try {
+        if DllCall("IsWindowVisible", "ptr", supportGui.Hwnd, "int") {
+            supportGui.Hide()
+            return
+        }
+    }
+
+    ; Show in a consistent place near the bottom-right of main window
+    mainGui.GetPos(&gx, &gy, &gw, &gh)
+
+    px := gx + gw - (popupW + 30)
+    py := gy + gh - 155  ; above footer/support link area
+
+    supportGui.Show("x" px " y" py " NA")
+}
+
+SupportPopup_ClickAway(wParam, lParam, msg, hwnd) {
+    global supportPopupHwnd
+
+    if !supportPopupHwnd
+        return
+
+    ; If click happened inside the popup, don't hide
+    MouseGetPos , , &winHwnd
+    if (winHwnd = supportPopupHwnd)
+        return
+
+    ; Otherwise hide popup
+    try WinHide("ahk_id " supportPopupHwnd)
+}

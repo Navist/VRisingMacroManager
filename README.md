@@ -1,15 +1,27 @@
 # V Rising Macro Manager (Bloodcraft UI)
 
-A Bloodcraft-themed AutoHotkey v2 macro manager for V Rising that lets players create and manage hotkey-driven chat macros.
+![AutoHotkey](https://img.shields.io/badge/AutoHotkey-v2-blue)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Game](https://img.shields.io/badge/game-V%20Rising-red)
+
+A Bloodcraft-themed **AutoHotkey v2 macro manager for V Rising** that allows players to create, edit, and manage hotkey-driven chat macros through a simple GUI.
+
+---
 
 ## Features
 
 - GUI to add, update, and delete hotkey bindings
-- Multiple action types: `SendChat`, `PreSendChat`, `StashNGrab`, `GrabBuffs`
+- Multiple macro action types:
+    - `SendChat`
+    - `PreSendChat`
+    - `StashNGrab`
+    - `GrabBuffs`
 - Bloodcraft (dark) and Light theme toggle
 - INI-based configuration persistence
 - Duplicate hotkey detection with visual highlighting
 - System tray icon with version tooltip
+
+---
 
 ## UI Preview
 
@@ -17,25 +29,21 @@ A Bloodcraft-themed AutoHotkey v2 macro manager for V Rising that lets players c
 | -------------------------------------------- | --------------------------------------------- |
 | <img src="assets/darkMode.png" width="100%"> | <img src="assets/lightMode.png" width="100%"> |
 
+---
+
 ## Requirements
 
-- AutoHotkey v2  
-  https://www.autohotkey.com/v2/
+- **AutoHotkey v2**
+
+https://www.autohotkey.com/v2/
+
+---
 
 ## Installation
 
 1. Install **AutoHotkey v2**
-2. Download or clone this repository
-3. Run `V_Rising_Macro_Manager.ahk`
+2. Clone or download this repository
 
-## Usage
-
-Launch the script and configure hotkeys through the GUI.
-
-Bindings are saved automatically to:
-vrising_macros.ini
-
-## Notes
-
-- The default configuration file `vrising_macros.ini` is ignored by git.
-- You can safely delete it to reset all bindings.
+```bash
+git clone https://github.com/Navist/VRisingMacroManager.git
+```
