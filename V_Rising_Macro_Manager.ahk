@@ -53,7 +53,7 @@ global supportHookInstalled := false
 global txtStatus
 global statusTimerRunning := false
 global APP_NAME := "V Rising Macro Manager"
-global APP_VERSION := "v2.3.0"
+global APP_VERSION := "v2.3.1"
 A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
@@ -1163,6 +1163,7 @@ ShowSupportMenu(*) {
             supportHookInstalled := true
             OnMessage(0x201, SupportPopup_ClickAway) ; WM_LBUTTONDOWN
             OnMessage(0x204, SupportPopup_ClickAway) ; WM_RBUTTONDOWN
+            OnMessage(0x1C, SupportPopup_ActivateApp) ; WM_ACTIVATEAPP (close when clicking outside the app)
         }
 
         ; Pre-calc size (AutoSize) once
@@ -1193,10 +1194,23 @@ SupportPopup_ClickAway(wParam, lParam, msg, hwnd) {
         return
 
     ; If click happened inside the popup, don't hide
-    MouseGetPos , , &winHwnd
+    MouseGetPos(, , &winHwnd)
     if (winHwnd = supportPopupHwnd)
         return
 
     ; Otherwise hide popup
     try WinHide("ahk_id " supportPopupHwnd)
+}
+
+SupportPopup_ActivateApp(wParam, lParam, msg, hwnd) {
+    ; Close the support popup when the app loses activation (clicking outside the window, alt-tab, etc.)
+    global supportPopupHwnd
+
+    if !supportPopupHwnd
+        return
+
+    ; wParam = 0 when deactivated, 1 when activated
+    if (wParam = 0) {
+        try WinHide("ahk_id " supportPopupHwnd)
+    }
 }
