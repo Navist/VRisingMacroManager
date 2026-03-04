@@ -1,0 +1,19 @@
+# User-specific config / runtime files
+vrising_macros.ini
+OldVersions
+
+# AHK compiled output (if you ever compile)
+*.exe
+
+# Logs / temp
+*.log
+*.tmp
+
+# Windows cruft
+Thumbs.db
+Desktop.ini
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
