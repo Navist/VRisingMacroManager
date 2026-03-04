@@ -16,7 +16,7 @@ AutoHotkey v2 macro manager for V Rising chat commands.
 
 ## Run
 
-Double-click `V_Rising_Macro_Manager.ahk`
+Double-click/Single-click `V_Rising_Macro_Manager.ahk`
 
 ## Notes
 
