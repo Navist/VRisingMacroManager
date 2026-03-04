@@ -12,7 +12,7 @@ AutoHotkey v2 macro manager for V Rising chat commands.
 
 ## Requirements
 
-- AutoHotkey v2
+- AutoHotkey v2 https://www.autohotkey.com/v2/
 
 ## Run
 
