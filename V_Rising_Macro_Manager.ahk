@@ -16,7 +16,18 @@ global themeName := "Bloodcraft"   ; "Bloodcraft" or "Light"
 global gTitleLogoPath := A_ScriptDir "\assets\bloodcraft_resized.ico"
 global gHelpLogoPath := A_ScriptDir "\assets\bloodcraft_resized.png"  ; prefer PNG for panel logo (optional)
 
+global picThemeIcon
+global themeIconBlood := A_ScriptDir "\icons\blood_droplet.png"
+global themeIconRest := A_ScriptDir "\icons\lantern.png"
+
 global iniPath := A_ScriptDir "\vrising_macros.ini"
+
+; Runtime toggles
+global gSuspended := false
+global gGameFocusOnly := true
+global gGameExe := "VRising.exe"
+global lvIndexMap := []  ; ListView row -> bindings index mapping (for search/filter)
+
 
 if FileExist(gTitleLogoPath)
     TraySetIcon(gTitleLogoPath)
@@ -46,14 +57,12 @@ global edtHotkey, ddlAction, chkEnabled, edtCommands
 global edtChatKey, edtDelay
 global txtFooter
 global picLogo
-global picSupport
-global txtSupport
 global supportPopupHwnd := 0
 global supportHookInstalled := false
 global txtStatus
 global statusTimerRunning := false
 global APP_NAME := "V Rising Macro Manager"
-global APP_VERSION := "v2.3.1"
+global APP_VERSION := "v2.4.0"
 A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
@@ -92,6 +101,11 @@ MakeCallback(bindingIndex) {
 
 RunBinding(i) {
     global bindings, sendDelay
+    global gSuspended, gGameFocusOnly, gGameExe
+    if (gSuspended)
+        return
+    if (gGameFocusOnly && !WinActive("ahk_exe " gGameExe))
+        return
     if (i < 1 || i > bindings.Length)
         return
 
@@ -215,6 +229,8 @@ SaveToIni() {
     IniWrite chatKey, iniPath, "Settings", "chatKey"
     IniWrite sendDelay, iniPath, "Settings", "sendDelay"
     IniWrite themeName, iniPath, "Settings", "theme"
+    IniWrite gGameFocusOnly ? 1 : 0, iniPath, "Settings", "gameFocusOnly"
+    IniWrite gGameExe, iniPath, "Settings", "gameExe"
     IniWrite bindings.Length, iniPath, "Meta", "count"
 
     loop bindings.Length {
@@ -234,7 +250,7 @@ SaveToIni() {
 }
 
 LoadFromIni() {
-    global iniPath, bindings, chatKey, sendDelay, themeName
+    global iniPath, bindings, chatKey, sendDelay, themeName, gGameFocusOnly, gGameExe
 
     if !FileExist(iniPath)
         return false
@@ -242,6 +258,8 @@ LoadFromIni() {
     chatKey := IniRead(iniPath, "Settings", "chatKey", chatKey)
     sendDelay := IniRead(iniPath, "Settings", "sendDelay", sendDelay)
     themeName := IniRead(iniPath, "Settings", "theme", themeName)
+    gGameFocusOnly := (IniRead(iniPath, "Settings", "gameFocusOnly", gGameFocusOnly ? 1 : 0) + 0) = 1
+    gGameExe := IniRead(iniPath, "Settings", "gameExe", gGameExe)
 
     count := (IniRead(iniPath, "Meta", "count", 0) + 0)
     bindings := []
@@ -422,6 +440,9 @@ ApplyTheme() {
         }
     }
 
+    ; Ensure stateful controls keep their special styling after theme application
+    try UpdateSuspendButtonText()
+
 }
 
 ; =========================
@@ -486,6 +507,80 @@ ApplySettings(rebind := true) {
         sendDelay := d + 0
     if rebind
         RegisterAllHotkeys()
+}
+
+
+FocusSearch() {
+    global edtSearch
+    if !IsSet(edtSearch)
+        return
+    try {
+        edtSearch.Focus()
+        edtSearch.SelectAll()
+    }
+}
+
+ToggleSuspend() {
+    global gSuspended
+    gSuspended := !gSuspended
+
+    ; update UI + tray
+    UpdateSuspendButtonText()
+    try {
+        if (gSuspended)
+            A_TrayMenu.Check("Suspend Macros")
+        else
+            A_TrayMenu.Uncheck("Suspend Macros")
+    }
+
+    SetStatus(gSuspended ? "Macros suspended" : "Macros enabled")
+}
+
+UpdateSuspendButtonText() {
+    global btnSuspend, gSuspended
+    if !IsSet(btnSuspend)
+        return
+
+    if (gSuspended) {
+        btnSuspend.Text := "Macros: OFF"
+        ; Crimson (OFF)
+        try btnSuspend.Opt("BackgroundE74C3C")
+        try btnSuspend.SetFont("cFFFFFF")
+    } else {
+        btnSuspend.Text := "Macros: ON"
+        ; Emerald (ON)
+        try btnSuspend.Opt("Background2ECC71")
+        try btnSuspend.SetFont("c000000")
+    }
+}
+
+
+SyncUiFromSettings() {
+    global chkGameOnly, gGameFocusOnly
+    if IsSet(chkGameOnly)
+        chkGameOnly.Value := gGameFocusOnly ? 1 : 0
+    UpdateSuspendButtonText()
+}
+
+MoveSelected(dir) {
+    global bindings
+    idx := GetSelectedBindingIndex()
+    if (!idx)
+        return
+
+    newIdx := idx + dir
+    if (newIdx < 1 || newIdx > bindings.Length)
+        return
+
+    ; swap
+    tmp := bindings[idx]
+    bindings[idx] := bindings[newIdx]
+    bindings[newIdx] := tmp
+
+    RefreshListView()
+    SelectBindingInList(newIdx)
+    RegisterAllHotkeys()
+    SetStatus(dir < 0 ? "Moved up" : "Moved down")
 }
 
 CreateGameButton(gui, x, y, w, h, text, callback, statusMsg := "") {
@@ -554,7 +649,7 @@ EnableButtonHover(gui) {
 }
 
 WM_MOUSEMOVE_Hover(gui, wParam, lParam, msg, hwnd) {
-    global gameButtons, hoveredBtn, themeName
+    global gameButtons, hoveredBtn, themeName, btnSuspend
 
     ; Only react when OUR gui is active (prevents weirdness system-wide)
     if (WinActive("ahk_id " gui.Hwnd) = 0)
@@ -579,6 +674,14 @@ WM_MOUSEMOVE_Hover(gui, wParam, lParam, msg, hwnd) {
     }
 
     if (!found) {
+        ClearHoveredButton()
+        return
+    }
+
+
+    ; Don't apply hover highlighting to the Suspend button.
+    ; It has a persistent ON/OFF state color (green/red) that should not be overwritten by hover redraws.
+    if (IsSet(btnSuspend) && btnSuspend && found.Hwnd = btnSuspend.Hwnd) {
         ClearHoveredButton()
         return
     }
@@ -662,6 +765,7 @@ ResetCtrlBackground(ctrl, color) {
 ; =========================
 BuildGui() {
     global mainGui, lv
+    global edtSearch, btnSuspend, chkGameOnly
     global edtHotkey, ddlAction, chkEnabled, edtCommands
     global edtChatKey, edtDelay
     global chatKey, sendDelay, themeName, btnTheme
@@ -670,6 +774,7 @@ BuildGui() {
     global themedText, themedInputs, themedOther
     global picLogo
     global y0, y0Offset
+    global picThemeIcon
 
     ; Reset theming buckets (prevents duplicates if you ever rebuild the GUI)
     themedText := []
@@ -724,13 +829,49 @@ BuildGui() {
     edtDelay.OnEvent("Change", (*) => ScheduleSettingsApply())
 
     btnApplySettings := CreateGameButton(mainGui, 360, y0 + 2, 90, 24, "Apply", (*) => ApplySettings())
-    btnTheme := CreateGameButton(mainGui, 465, y0 + 2, 160, 24, "", (*) => ToggleTheme())
+
+    ; ---- Safety / QoL toggles ----
+    btnSuspend := CreateGameButton(mainGui, 460, y0 + 2, 110, 24, "", (*) => ToggleSuspend())
+    UpdateSuspendButtonText()
+    AddTooltip(btnSuspend, "Suspend Macros`n`nDisables all macro hotkeys without closing the app.")
+
+    chkGameOnly := mainGui.AddCheckBox("x585 y" y0 + 5 " w18 h18", "")
+    chkGameOnly.Value := gGameFocusOnly ? 1 : 0
+    themedOther.Push(chkGameOnly)
+
+    txtGameOnly := mainGui.AddText("x607 y" y0 + 4 " w120", "V Rising only")
+    themedText.Push(txtGameOnly)
+
+    SetGameOnlyFromUI := (*) => (
+        gGameFocusOnly := (chkGameOnly.Value = 1),
+        SetStatus(gGameFocusOnly ? "Game focus safety: ON" : "Game focus safety: OFF"),
+        ScheduleSettingsApply()
+    )
+
+    ToggleGameOnlyFromLabel := (*) => (
+        chkGameOnly.Value := chkGameOnly.Value ? 0 : 1,
+        SetGameOnlyFromUI()
+    )
+
+    chkGameOnly.OnEvent("Click", SetGameOnlyFromUI)
+    txtGameOnly.OnEvent("Click", ToggleGameOnlyFromLabel)
+
+    AddTooltip(chkGameOnly, "Game focus safety`n`nWhen enabled, macros only run while V Rising is the active window.")
+    AddTooltip(txtGameOnly, "Game focus safety`n`nWhen enabled, macros only run while V Rising is the active window.")
+
+    btnTheme := CreateGameButton(mainGui, 867, y0 + 2, 85, 24, "", (*) => ToggleTheme())
+    picThemeIcon := mainGui.AddPicture("x" (840) " y" (y0 - 2) " w32 h32 +BackgroundTrans", themeIconBlood)
+    ; btnTheme := CreateGameButton(mainGui, 840, y0 + 2, 85, 24, "", (*) => ToggleTheme())
+    ; picThemeIcon := mainGui.AddPicture("x" (925) " y" (y0 - 2) " w32 h32 +BackgroundTrans", themeIconBlood)
+
+    picThemeIcon.OnEvent("Click", (*) => ToggleTheme())
+
     UpdateThemeButtonText()
 
     ; Tooltips
     AddTooltip(btnApplySettings,
         "Apply`n`nApplies Chat Key + Delay immediately.`n(Also auto-applies after you stop typing.)")
-    AddTooltip(btnTheme, "Toggle Theme`n`nSwitch between Bloodcraft Dark and Light Mode.")
+    AddTooltip(btnTheme, "Toggle Theme`n`nSwitch between Dark Mode and Light Mode.")
 
     sepTop := mainGui.AddText("x10 y" y0 + 34 " w944 h1", "")
     global uiSepTop := sepTop
@@ -739,7 +880,15 @@ BuildGui() {
     global uiSepMid := sepMid
 
     ; ---- ListView of binds ----
-    lv := mainGui.AddListView("x10 y" y0 + 46 " w440 h300 -Multi", ["On", "Hotkey", "Action", "Commands (preview)"])
+    ; ---- Search / Filter ----
+    t := mainGui.AddText("x10 y" y0 + 42 " w55", "Search:")
+    themedText.Push(t)
+    edtSearch := mainGui.AddEdit("x65 y" y0 + 40 " w385", "")
+    themedInputs.Push(edtSearch)
+    edtSearch.OnEvent("Change", (*) => RefreshListView())
+    AddTooltip(edtSearch, "Search / Filter`n`nType to filter by hotkey, action, or command text.`nShortcut: Ctrl+F")
+
+    lv := mainGui.AddListView("x10 y" y0 + 66 " w440 h280 -Multi", ["On", "Hotkey", "Action", "Commands (preview)"])
     lv.Opt("+Grid")
     lv.OnEvent("Click", (*) => LoadSelectedIntoEditor())
 
@@ -818,6 +967,12 @@ BuildGui() {
     btnRebind := CreateGameButton(mainGui, 200, y0 + y0Offset, 120, 24, "Rebind Hotkeys", (*) => (ApplySettings(),
     RegisterAllHotkeys()))
 
+    btnMoveUp := CreateGameButton(mainGui, 330, y0 + y0Offset, 55, 24, "▲ Up", (*) => MoveSelected(-1))
+    btnMoveDown := CreateGameButton(mainGui, 390, y0 + y0Offset, 60, 24, "▼ Down", (*) => MoveSelected(1))
+    AddTooltip(btnMoveUp, "Move Up`n`nMoves the selected macro up in the list.")
+    AddTooltip(btnMoveDown, "Move Down`n`nMoves the selected macro down in the list.")
+    themedOther.Push(btnMoveUp), themedOther.Push(btnMoveDown)
+
     AddTooltip(btnSave, "Save INI`n`nSaves bindings + settings to vrising_macros.ini.")
     AddTooltip(btnLoad, "Load INI`n`nLoads bindings + settings from vrising_macros.ini.")
     AddTooltip(btnRebind, "Rebind Hotkeys`n`nRe-registers enabled hotkeys. Use this if hotkeys stop responding.")
@@ -825,7 +980,7 @@ BuildGui() {
     themedOther.Push(btnSave), themedOther.Push(btnLoad), themedOther.Push(btnRebind)
 
     btnSave.OnEvent("Click", (*) => (ApplySettings(), SaveToIni()))
-    btnLoad.OnEvent("Click", (*) => (LoadFromIni(), RefreshListView(), ApplySettings(false), RegisterAllHotkeys(),
+    btnLoad.OnEvent("Click", (*) => (LoadFromIni(), SyncUiFromSettings(), RefreshListView(), ApplySettings(false), RegisterAllHotkeys(),
     ApplyTheme()))
     btnRebind.OnEvent("Click", (*) => (ApplySettings(), RegisterAllHotkeys()))
 
@@ -857,6 +1012,10 @@ BuildGui() {
     ApplyTheme()
     mainGui.OnEvent("Size", GuiResized)
     mainGui.Show("w960 h450")
+    ; Ctrl+F focuses the Search box (while the window is active)
+    HotIfWinActive("ahk_id " mainGui.Hwnd)
+    Hotkey "^f", (*) => FocusSearch(), "On"
+    HotIf
     EnableButtonHover(mainGui)
     ForceBorderless(mainGui.Hwnd)
     RemoveDwmFrame(mainGui.Hwnd)
@@ -895,11 +1054,20 @@ GuiResized(thisGui, minMax, w, h) {
 
 UpdateThemeButtonText() {
     global btnTheme, themeName
+    global picThemeIcon, themeIconBlood, themeIconRest
+
     if !IsSet(btnTheme)
         return
-    btnTheme.Text := (themeName = "Bloodcraft")
-        ? "🩸 Bloodcraft Dark: ON"
-        : "☀️ Light Mode: ON"
+
+    if (themeName = "Bloodcraft") {
+        btnTheme.Text := "Hunt Mode"
+        if IsSet(picThemeIcon)
+            picThemeIcon.Value := themeIconBlood
+    } else {
+        btnTheme.Text := "Rest Mode"
+        if IsSet(picThemeIcon)
+            picThemeIcon.Value := themeIconRest
+    }
 }
 
 ForceBorderless(hwnd) {
@@ -919,35 +1087,87 @@ RemoveDwmFrame(hwnd) {
 ; UI logic
 ; =========================
 RefreshListView() {
-    global lv, bindings
+    global lv, bindings, lvIndexMap, edtSearch
     lv.Delete()
+    lvIndexMap := []
+
+    filter := ""
+    if IsSet(edtSearch)
+        filter := StrLower(Trim(edtSearch.Text))
 
     loop bindings.Length {
-        b := bindings[A_Index]
+        i := A_Index
+        b := bindings[i]
+
         preview := ""
         if (b.commands.Length >= 1) {
             preview := b.commands[1]
             if (b.commands.Length > 1)
                 preview .= "  (+" (b.commands.Length - 1) " more)"
         }
+
+        if (filter != "") {
+            hay := StrLower(b.hotkey " " b.action " " preview)
+            ; also search full command list (best-effort)
+            if (b.commands.Length > 1) {
+                for _, c in b.commands
+                    hay .= " " StrLower(c)
+            }
+            if !InStr(hay, filter)
+                continue
+        }
+
         lv.Add("", b.enabled ? "✓" : "", b.hotkey, b.action, preview)
+        lvIndexMap.Push(i)
     }
+
     lv.ModifyCol(1, 35)
     lv.ModifyCol(2, 80)
     lv.ModifyCol(3, 110)
     lv.ModifyCol(4, 200)
 }
 
-GetSelectedIndex() {
+GetSelectedRow() {
     global lv
     return lv.GetNext(0)
+}
+
+GetSelectedBindingIndex() {
+    global lvIndexMap
+    row := GetSelectedRow()
+    if (!row)
+        return 0
+    ; If filtering is active, map LV row -> binding index
+    if (IsSet(lvIndexMap) && lvIndexMap.Length >= row)
+        return lvIndexMap[row]
+    return row
+}
+
+SelectBindingInList(bindingIndex) {
+    global lv, lvIndexMap
+    if (bindingIndex < 1)
+        return
+    ; find matching row in current list
+    row := 0
+    if (IsSet(lvIndexMap) && lvIndexMap.Length) {
+        loop lvIndexMap.Length {
+            if (lvIndexMap[A_Index] = bindingIndex) {
+                row := A_Index
+                break
+            }
+        }
+    } else {
+        row := bindingIndex
+    }
+    if (row)
+        lv.Modify(row, "Select Focus Vis")
 }
 
 LoadSelectedIntoEditor() {
     global bindings
     global edtHotkey, ddlAction, chkEnabled, edtCommands
 
-    idx := GetSelectedIndex()
+    idx := GetSelectedBindingIndex()
     if (!idx)
         return
 
@@ -1019,7 +1239,7 @@ AddBindingFromEditor() {
 
 UpdateBindingFromEditor() {
     global bindings, lv
-    idx := GetSelectedIndex()
+    idx := GetSelectedBindingIndex()
     if (!idx) {
         MsgBox "Select a binding to update.", "Update Binding", "Icon!"
         return
@@ -1057,7 +1277,7 @@ UpdateBindingFromEditor() {
 
 DeleteSelected() {
     global bindings
-    idx := GetSelectedIndex()
+    idx := GetSelectedBindingIndex()
     if (!idx) {
         MsgBox "Select a binding to delete.", "Delete Binding", "Icon!"
         return
@@ -1108,6 +1328,16 @@ if (!LoadFromIni())
     SeedDefaultsIfEmpty()
 
 BuildGui()
+; Tray menu
+try {
+    A_TrayMenu.Delete()
+    A_TrayMenu.Add("Open", (*) => (mainGui.Show(), WinActivate("ahk_id " mainGui.Hwnd)))
+    A_TrayMenu.Add("Suspend Macros", (*) => ToggleSuspend())
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Exit", (*) => ExitApp())
+    if (gSuspended)
+        A_TrayMenu.Check("Suspend Macros")
+} 
 RefreshListView()
 RegisterAllHotkeys()
 
