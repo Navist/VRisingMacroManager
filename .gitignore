@@ -18,4 +18,6 @@ Desktop.ini
 .vscode/
 .idea/
 *.swp
-V_Rising_Macro_Manager_OldUI.ahk
+V_Rising_Macro_Manager_OLD.ahk
+app_settings.ini
+profiles/Blood N Wine.ini

@@ -22,12 +22,21 @@ global themeIconRest := A_ScriptDir "\icons\lantern.png"
 
 global iniPath := A_ScriptDir "\vrising_macros.ini"
 
+; =========================
+; Profiles
+; =========================
+global profilesDir := A_ScriptDir "\profiles"
+global appIniPath := A_ScriptDir "\app_settings.ini"
+global currentProfile := "Default"
+global ddlProfile
+global profileList := []
+global gProfileUiUpdating := false
+
 ; Runtime toggles
 global gSuspended := false
 global gGameFocusOnly := true
 global gGameExe := "VRising.exe"
 global lvIndexMap := []  ; ListView row -> bindings index mapping (for search/filter)
-
 
 if FileExist(gTitleLogoPath)
     TraySetIcon(gTitleLogoPath)
@@ -62,7 +71,7 @@ global supportHookInstalled := false
 global txtStatus
 global statusTimerRunning := false
 global APP_NAME := "V Rising Macro Manager"
-global APP_VERSION := "v2.4.0"
+global APP_VERSION := "v2.5.0"
 A_IconTip := APP_NAME " " APP_VERSION
 
 ; Binding system
@@ -221,69 +230,390 @@ RegisterAllHotkeys() {
 ; NOTE: multi-line INI values can be finicky on some systems.
 ; If it ever drops lines again, we can switch to cmd1/cmd2 storage.
 ; =========================
-SaveToIni() {
-    global iniPath, bindings, chatKey, sendDelay, themeName
 
-    try FileDelete iniPath
+; =========================
+; Profile system
+; =========================
 
-    IniWrite chatKey, iniPath, "Settings", "chatKey"
-    IniWrite sendDelay, iniPath, "Settings", "sendDelay"
-    IniWrite themeName, iniPath, "Settings", "theme"
-    IniWrite gGameFocusOnly ? 1 : 0, iniPath, "Settings", "gameFocusOnly"
-    IniWrite gGameExe, iniPath, "Settings", "gameExe"
-    IniWrite bindings.Length, iniPath, "Meta", "count"
+EnsureProfilesDir() {
+    global profilesDir
+    if !DirExist(profilesDir) {
+        try DirCreate(profilesDir)
+    }
+}
+
+SanitizeProfileName(name) {
+    n := Trim(name)
+    ; Remove characters that are invalid in Windows filenames
+    n := RegExReplace(n, '[\\\/\:\*\?\"<>\|]', "")
+    n := RegExReplace(n, '\s+', " ")
+    n := Trim(n)
+    if (n = "")
+        n := "Default"
+    return n
+}
+
+GetProfileIniPath(name) {
+    global profilesDir
+    safe := SanitizeProfileName(name)
+    return profilesDir "\\" safe ".ini"
+}
+
+ListProfiles() {
+    global profilesDir
+    list := []
+    EnsureProfilesDir()
+
+    loop files profilesDir "\\*.ini" {
+        fn := A_LoopFileName
+        name := RegExReplace(fn, "\.ini$", "")
+        if (name != "")
+            list.Push(name)
+    }
+
+    if (list.Length = 0)
+        list.Push("Default")
+
+    ArraySort(list)
+
+    ; Move Default to top if present
+    for i, v in list {
+        if (v = "Default") {
+            list.RemoveAt(i)
+            list.InsertAt(1, "Default")
+            break
+        }
+    }
+
+    return list
+}
+
+ArraySort(arr) {
+    loop arr.Length {
+        loop arr.Length - A_Index {
+            if (StrCompare(arr[A_Index], arr[A_Index + 1]) > 0) {
+                temp := arr[A_Index]
+                arr[A_Index] := arr[A_Index + 1]
+                arr[A_Index + 1] := temp
+            }
+        }
+    }
+
+    for i, v in arr {
+        if (v = "Default") {
+            arr.RemoveAt(i)
+            arr.InsertAt(1, "Default")
+            break
+        }
+    }
+
+    return arr
+}
+
+LoadAppLastProfile() {
+    global appIniPath, currentProfile
+    try {
+        currentProfile := IniRead(appIniPath, "App", "lastProfile", currentProfile)
+    }
+    catch {
+        ; ignore
+    }
+    currentProfile := SanitizeProfileName(currentProfile)
+}
+
+SaveAppLastProfile() {
+    global appIniPath, currentProfile
+    try IniWrite currentProfile, appIniPath, "App", "lastProfile"
+}
+
+InitProfiles() {
+    global iniPath, profilesDir, currentProfile
+
+    EnsureProfilesDir()
+
+    ; Migration: if the old single-file INI exists and Default profile doesn't, copy it in.
+    oldIni := iniPath
+    defaultIni := GetProfileIniPath("Default")
+
+    if FileExist(oldIni) && !FileExist(defaultIni) {
+        try FileCopy oldIni, defaultIni, 1
+    }
+
+    LoadAppLastProfile()
+
+    ; If selected profile INI doesn't exist yet, fall back to Default
+    if !FileExist(GetProfileIniPath(currentProfile)) {
+        currentProfile := "Default"
+    }
+
+    SaveAppLastProfile()
+}
+
+RefreshProfileDropdown(keepSelection := true) {
+    global ddlProfile, profileList, currentProfile, gProfileUiUpdating
+
+    profileList := ListProfiles()
+
+    if !IsSet(ddlProfile) || !ddlProfile
+        return
+
+    gProfileUiUpdating := true
+
+    ddlProfile.Delete()
+    for _, name in profileList
+        ddlProfile.Add([name])
+
+    if keepSelection {
+        ; Select currentProfile if present
+        idx := 0
+        loop profileList.Length {
+            if (profileList[A_Index] = currentProfile) {
+                idx := A_Index
+                break
+            }
+        }
+        ddlProfile.Choose(idx ? idx : 1)
+    } else {
+        ddlProfile.Choose(1)
+    }
+
+    gProfileUiUpdating := false
+}
+
+OnProfileDropdownChanged() {
+    global ddlProfile, gProfileUiUpdating
+    if (gProfileUiUpdating)
+        return
+    name := ddlProfile.Text
+    if (name != "")
+        SwitchProfile(name)
+}
+
+SaveCurrentProfile() {
+    global currentProfile
+    SaveToIni(GetProfileIniPath(currentProfile))
+    SaveAppLastProfile()
+}
+
+LoadCurrentProfile() {
+    global currentProfile
+    ok := LoadFromIni(GetProfileIniPath(currentProfile))
+    if (!ok)
+        return false
+    SaveAppLastProfile()
+    return true
+}
+
+SwitchProfile(newName) {
+    global currentProfile
+    newName := SanitizeProfileName(newName)
+    if (newName = currentProfile)
+        return
+
+    ; Always save current before switching (prevents accidental loss)
+    SaveCurrentProfile()
+
+    currentProfile := newName
+
+    ; If profile doesn't exist, seed an empty file from current state
+    if !FileExist(GetProfileIniPath(currentProfile)) {
+        SaveCurrentProfile()
+    } else {
+        LoadCurrentProfile()
+    }
+
+    ; Refresh UI + hotkeys
+    RefreshListView()
+    ApplySettings()
+    RegisterAllHotkeys()
+    SaveAppLastProfile()
+}
+
+ShowProfileMenu(*) {
+    global currentProfile
+
+    m := Menu()
+
+    m.Add("New Profile…", (*) => CreateNewProfile())
+    m.Add("Rename Profile…", (*) => RenameCurrentProfile())
+    m.Add()
+    m.Add("Duplicate Profile…", (*) => DuplicateCurrentProfile())
+    m.Add()
+    m.Add("Delete Profile", (*) => DeleteCurrentProfile())
+
+    if (currentProfile = "Default")
+        m.Disable("Delete Profile")
+
+    m.Show()
+}
+
+CreateNewProfile() {
+    global currentProfile
+    res := InputBox("Enter a new profile name:", "New Profile", "w320")
+    if (res.Result != "OK")
+        return
+    name := res.Value
+    name := SanitizeProfileName(name)
+    if (name = "")
+        return
+
+    ; Save current to preserve it, then create new profile from current state
+    SaveCurrentProfile()
+    currentProfile := name
+    SaveCurrentProfile()
+
+    RefreshProfileDropdown(true)
+    RefreshListView()
+    RegisterAllHotkeys()
+}
+
+RenameCurrentProfile() {
+    global currentProfile
+
+    if (currentProfile = "Default") {
+        MsgBox("The Default profile can't be renamed.", "Rename Profile", "Icon!")
+        return
+    }
+
+    res := InputBox("Rename profile '" currentProfile "' to:", "Rename Profile", "w360")
+    if (res.Result != "OK")
+        return
+    newName := res.Value
+    newName := SanitizeProfileName(newName)
+
+    if (newName = "" || newName = currentProfile)
+        return
+
+    oldPath := GetProfileIniPath(currentProfile)
+    newPath := GetProfileIniPath(newName)
+
+    if FileExist(newPath) {
+        MsgBox("A profile named '" newName "' already exists.", "Rename Profile", "Icon!")
+        return
+    }
+
+    try FileMove oldPath, newPath, 1
+    currentProfile := newName
+    SaveAppLastProfile()
+
+    RefreshProfileDropdown(true)
+}
+
+DuplicateCurrentProfile() {
+    global currentProfile
+    res := InputBox("Duplicate profile '" currentProfile "' as:", "Duplicate Profile", "w360")
+    if (res.Result != "OK")
+        return
+    copyName := res.Value
+    copyName := SanitizeProfileName(copyName)
+    if (copyName = "" || copyName = currentProfile)
+        return
+
+    src := GetProfileIniPath(currentProfile)
+    dst := GetProfileIniPath(copyName)
+
+    if FileExist(dst) {
+        MsgBox("A profile named '" copyName "' already exists.", "Duplicate Profile", "Icon!")
+        return
+    }
+
+    try FileCopy src, dst, 1
+    currentProfile := copyName
+    SaveAppLastProfile()
+
+    RefreshProfileDropdown(true)
+}
+
+DeleteCurrentProfile() {
+    global currentProfile
+    if (currentProfile = "Default")
+        return
+
+    r := MsgBox("Delete profile '" currentProfile "'?`n`nThis removes the profile INI file from:`n" GetProfileIniPath(
+        currentProfile), "Delete Profile", "YesNo Icon!")
+    if (r != "Yes")
+        return
+
+    try FileDelete GetProfileIniPath(currentProfile)
+
+    currentProfile := "Default"
+    LoadCurrentProfile()
+    SaveAppLastProfile()
+
+    RefreshProfileDropdown(true)
+    RefreshListView()
+    RegisterAllHotkeys()
+}
+
+SaveToIni(path := "") {
+    global iniPath, bindings, chatKey, sendDelay, themeName, gGameFocusOnly, gGameExe
+
+    if (path = "")
+        path := iniPath
+
+    try FileDelete path
+
+    IniWrite chatKey, path, "Settings", "chatKey"
+    IniWrite sendDelay, path, "Settings", "sendDelay"
+    IniWrite themeName, path, "Settings", "theme"
+    IniWrite gGameFocusOnly ? 1 : 0, path, "Settings", "gameFocusOnly"
+    IniWrite gGameExe, path, "Settings", "gameExe"
+    IniWrite bindings.Length, path, "Meta", "count"
 
     loop bindings.Length {
         b := bindings[A_Index]
         section := "Bind" A_Index
 
-        IniWrite b.enabled ? 1 : 0, iniPath, section, "enabled"
-        IniWrite b.hotkey, iniPath, section, "hotkey"
-        IniWrite b.action, iniPath, section, "action"
+        IniWrite b.enabled ? 1 : 0, path, section, "enabled"
+        IniWrite b.hotkey, path, section, "hotkey"
+        IniWrite b.action, path, section, "action"
 
         ; Store commands safely as cmdCount + cmd1..cmdN
-        IniWrite b.commands.Length, iniPath, section, "cmdCount"
+        IniWrite b.commands.Length, path, section, "cmdCount"
         loop b.commands.Length {
-            IniWrite b.commands[A_Index], iniPath, section, "cmd" A_Index
+            IniWrite b.commands[A_Index], path, section, "cmd" A_Index
         }
     }
 }
 
-LoadFromIni() {
+LoadFromIni(path := "") {
     global iniPath, bindings, chatKey, sendDelay, themeName, gGameFocusOnly, gGameExe
 
-    if !FileExist(iniPath)
+    if (path = "")
+        path := iniPath
+
+    if !FileExist(path)
         return false
 
-    chatKey := IniRead(iniPath, "Settings", "chatKey", chatKey)
-    sendDelay := IniRead(iniPath, "Settings", "sendDelay", sendDelay)
-    themeName := IniRead(iniPath, "Settings", "theme", themeName)
-    gGameFocusOnly := (IniRead(iniPath, "Settings", "gameFocusOnly", gGameFocusOnly ? 1 : 0) + 0) = 1
-    gGameExe := IniRead(iniPath, "Settings", "gameExe", gGameExe)
+    chatKey := IniRead(path, "Settings", "chatKey", chatKey)
+    sendDelay := IniRead(path, "Settings", "sendDelay", sendDelay)
+    themeName := IniRead(path, "Settings", "theme", themeName)
+    gGameFocusOnly := (IniRead(path, "Settings", "gameFocusOnly", gGameFocusOnly ? 1 : 0) + 0) = 1
+    gGameExe := IniRead(path, "Settings", "gameExe", gGameExe)
 
-    count := (IniRead(iniPath, "Meta", "count", 0) + 0)
+    count := (IniRead(path, "Meta", "count", 0) + 0)
     bindings := []
 
     loop count {
         section := "Bind" A_Index
 
-        enabled := (IniRead(iniPath, section, "enabled", 1) + 0)
-        hk := IniRead(iniPath, section, "hotkey", "")
-        action := IniRead(iniPath, section, "action", "SendChat")
+        enabled := (IniRead(path, section, "enabled", 1) + 0)
+        hk := IniRead(path, section, "hotkey", "")
+        action := IniRead(path, section, "action", "SendChat")
 
         ; Preferred: cmdCount/cmd#
-        cmdCount := (IniRead(iniPath, section, "cmdCount", 0) + 0)
+        cmdCount := (IniRead(path, section, "cmdCount", 0) + 0)
         cmds := []
 
         if (cmdCount > 0) {
             loop cmdCount {
-                c := IniRead(iniPath, section, "cmd" A_Index, "")
+                c := IniRead(path, section, "cmd" A_Index, "")
                 if (Trim(c) != "")
                     cmds.Push(c)
             }
         } else {
             ; Fallback: legacy multiline "commands" key (best-effort)
-            block := IniRead(iniPath, section, "commands", "")
+            block := IniRead(path, section, "commands", "")
             cmds := ParseCommands(block)
         }
 
@@ -509,7 +839,6 @@ ApplySettings(rebind := true) {
         RegisterAllHotkeys()
 }
 
-
 FocusSearch() {
     global edtSearch
     if !IsSet(edtSearch)
@@ -553,7 +882,6 @@ UpdateSuspendButtonText() {
         try btnSuspend.SetFont("c000000")
     }
 }
-
 
 SyncUiFromSettings() {
     global chkGameOnly, gGameFocusOnly
@@ -678,7 +1006,6 @@ WM_MOUSEMOVE_Hover(gui, wParam, lParam, msg, hwnd) {
         return
     }
 
-
     ; Don't apply hover highlighting to the Suspend button.
     ; It has a persistent ON/OFF state color (green/red) that should not be overwritten by hover redraws.
     if (IsSet(btnSuspend) && btnSuspend && found.Hwnd = btnSuspend.Hwnd) {
@@ -765,7 +1092,7 @@ ResetCtrlBackground(ctrl, color) {
 ; =========================
 BuildGui() {
     global mainGui, lv
-    global edtSearch, btnSuspend, chkGameOnly
+    global edtSearch, ddlProfile, btnProfileMenu, btnSuspend, chkGameOnly
     global edtHotkey, ddlAction, chkEnabled, edtCommands
     global edtChatKey, edtDelay
     global chatKey, sendDelay, themeName, btnTheme
@@ -880,14 +1207,27 @@ BuildGui() {
     global uiSepMid := sepMid
 
     ; ---- ListView of binds ----
-    ; ---- Search / Filter ----
-    t := mainGui.AddText("x10 y" y0 + 42 " w55", "Search:")
+    ; ---- Profiles + Search / Filter ----
+    t := mainGui.AddText("x10 y" y0 + 42 " w48", "Profile:")
     themedText.Push(t)
-    edtSearch := mainGui.AddEdit("x65 y" y0 + 40 " w385", "")
+
+    ddlProfile := mainGui.AddDropDownList("x60 y" y0 + 40 " w130 Choose1", [])
+    themedOther.Push(ddlProfile)
+    ddlProfile.OnEvent("Change", (*) => OnProfileDropdownChanged())
+
+    btnProfileMenu := CreateGameButton(mainGui, 195, y0 + 40, 70, 24, "Manage", (*) => ShowProfileMenu())
+    AddTooltip(btnProfileMenu, "Profiles`n`nCreate / rename / duplicate / delete profiles.")
+
+    t := mainGui.AddText("x275 y" y0 + 42 " w55", "Search:")
+    themedText.Push(t)
+
+    edtSearch := mainGui.AddEdit("x330 y" y0 + 40 " w120", "")
     themedInputs.Push(edtSearch)
     edtSearch.OnEvent("Change", (*) => RefreshListView())
     AddTooltip(edtSearch, "Search / Filter`n`nType to filter by hotkey, action, or command text.`nShortcut: Ctrl+F")
 
+    ; Populate profile dropdown after control exists
+    RefreshProfileDropdown(true)
     lv := mainGui.AddListView("x10 y" y0 + 66 " w440 h280 -Multi", ["On", "Hotkey", "Action", "Commands (preview)"])
     lv.Opt("+Grid")
     lv.OnEvent("Click", (*) => LoadSelectedIntoEditor())
@@ -961,9 +1301,11 @@ BuildGui() {
     AddTooltip(btnUpdate, "Update`n`nOverwrites the selected row using the editor fields on the right.")
     AddTooltip(btnDelete, "Delete`n`nRemoves the selected binding row.")
 
-    btnSave := CreateGameButton(mainGui, 10, y0 + y0Offset, 90, 24, "Save INI", (*) => SaveToIni(), "Saved to INI")
-    btnLoad := CreateGameButton(mainGui, 105, y0 + y0Offset, 90, 24, "Load INI", (*) => LoadFromIni(),
-    "Loaded from INI")
+    btnSave := CreateGameButton(mainGui, 10, y0 + y0Offset, 90, 24, "Save", (*) => SaveCurrentProfile(),
+    "Profile saved")
+    btnLoad := CreateGameButton(mainGui, 105, y0 + y0Offset, 90, 24, "Reload", (*) => (LoadCurrentProfile(),
+    RefreshListView(), RegisterAllHotkeys()),
+    "Profile reloaded")
     btnRebind := CreateGameButton(mainGui, 200, y0 + y0Offset, 120, 24, "Rebind Hotkeys", (*) => (ApplySettings(),
     RegisterAllHotkeys()))
 
@@ -973,14 +1315,17 @@ BuildGui() {
     AddTooltip(btnMoveDown, "Move Down`n`nMoves the selected macro down in the list.")
     themedOther.Push(btnMoveUp), themedOther.Push(btnMoveDown)
 
-    AddTooltip(btnSave, "Save INI`n`nSaves bindings + settings to vrising_macros.ini.")
-    AddTooltip(btnLoad, "Load INI`n`nLoads bindings + settings from vrising_macros.ini.")
+    AddTooltip(btnSave, "Save Profile`n`nSaves bindings + settings to the current profile INI in \profiles\.")
+    AddTooltip(btnLoad,
+        "Reload Profile`n`nReloads bindings + settings from the current profile INI in \profiles\ (discarding unsaved changes)."
+    )
     AddTooltip(btnRebind, "Rebind Hotkeys`n`nRe-registers enabled hotkeys. Use this if hotkeys stop responding.")
 
     themedOther.Push(btnSave), themedOther.Push(btnLoad), themedOther.Push(btnRebind)
 
     btnSave.OnEvent("Click", (*) => (ApplySettings(), SaveToIni()))
-    btnLoad.OnEvent("Click", (*) => (LoadFromIni(), SyncUiFromSettings(), RefreshListView(), ApplySettings(false), RegisterAllHotkeys(),
+    btnLoad.OnEvent("Click", (*) => (LoadFromIni(), SyncUiFromSettings(), RefreshListView(), ApplySettings(false),
+    RegisterAllHotkeys(),
     ApplyTheme()))
     btnRebind.OnEvent("Click", (*) => (ApplySettings(), RegisterAllHotkeys()))
 
@@ -1323,9 +1668,14 @@ SeedDefaultsIfEmpty() {
     bindings.Push({ enabled: true, hotkey: "+F1", action: "SendChat", commands: ['.pull "Plant Fibre" 9999'] })
 }
 
-; Load config if exists, otherwise seed defaults
-if (!LoadFromIni())
+; Load profiles / config
+InitProfiles()
+
+; Load current profile if it exists, otherwise seed defaults into Default profile
+if (!LoadCurrentProfile()) {
     SeedDefaultsIfEmpty()
+    SaveCurrentProfile()
+}
 
 BuildGui()
 ; Tray menu
@@ -1337,7 +1687,7 @@ try {
     A_TrayMenu.Add("Exit", (*) => ExitApp())
     if (gSuspended)
         A_TrayMenu.Check("Suspend Macros")
-} 
+}
 RefreshListView()
 RegisterAllHotkeys()
 
