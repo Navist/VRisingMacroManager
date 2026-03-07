@@ -3,26 +3,22 @@
 ![AutoHotkey](https://img.shields.io/badge/AutoHotkey-v2-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Game](https://img.shields.io/badge/game-V%20Rising-red)
+![Latest Release](https://img.shields.io/github/v/release/Navist/VRisingMacroManager)
+![Download](https://img.shields.io/github/downloads/Navist/VRisingMacroManager/total)
 
-A **GUI-based macro manager built with AutoHotkey v2 for V Rising**,
-designed to streamline chat commands and frequently used in-game actions
-through customizable hotkeys.
+A **GUI-based macro manager built with AutoHotkey v2 for V Rising**, designed to streamline chat commands and frequently used in‑game actions through customizable hotkeys.
 
-The tool provides a clean, Bloodcraft-inspired interface that allows
-players to **create, organize, and trigger macros without editing
-scripts manually**.
+The tool provides a clean **Bloodcraft‑inspired interface** that allows players to **create, organize, and trigger macros without editing scripts manually**.
 
 ---
 
 # Overview
 
-The **V Rising Macro Manager** allows players to bind macros to hotkeys
-and execute in-game actions instantly.\
-Instead of maintaining raw scripts, users can manage their macros
-through an intuitive graphical interface with persistent configuration.
+The **V Rising Macro Manager** allows players to bind macros to hotkeys and execute in‑game actions instantly.
 
-The application stores macro data in a configuration file and
-automatically loads bindings when the program starts.
+Instead of maintaining raw scripts, users can manage their macros through an intuitive graphical interface with persistent configuration.
+
+The application stores macro data in configuration files and automatically loads bindings when the program starts.
 
 ---
 
@@ -32,38 +28,79 @@ automatically loads bindings when the program starts.
 
 - Create and assign macros to custom hotkeys
 - Edit or remove existing macro bindings
-- Persistent macro storage using a configuration file
+- Persistent macro storage using configuration files
+- Duplicate hotkey detection
+
+---
+
+## Profiles (NEW in v2.5.0)
+
+The **Profile System** allows users to maintain multiple macro setups and switch between them instantly.
+
+Examples:
+
+- Different profiles for **different V Rising servers**
+- Separate profiles for **PvE / PvP**
+- Custom setups for **different characters or playstyles**
+
+Each profile stores:
+
+- Hotkeys
+- Macro actions
+- Chat key settings
+- UI preferences
+
+Profiles can be switched instantly from the interface.
+
+---
 
 ## Macro Action Types
 
-Supported macro behaviors include:
+### SendChat
 
-- **SendChat**\
-  Sends a message directly to in-game chat.
+Sends a message directly to in‑game chat.
 
-- **PrefillChat**\
-  Opens the chat box and pre-fills a command for manual confirmation.
+Example:
+/unstuck
 
-_(Additional macro types may be added depending on the server or mod
-environment.)_
+### PrefillChat
 
-## User Interface
+Opens the chat box and pre‑fills a command for manual confirmation.
 
-- Bloodcraft-themed **dark UI**
-- Optional **Light theme**
-- Action help panel for contextual guidance
+Example:
+/tp castle
+
+_(Additional macro types may be added depending on server or mod environment.)_
+
+---
+
+# User Interface
+
+- Bloodcraft themed **Dark Mode**
+- Optional **Light Mode**
+- Contextual **Action Help Panel**
 - Organized macro listing and editing
+- Instant **Profile Switching**
 
-## Hotkey Safety
+---
+
+# Hotkey Safety
+
+The macro manager prevents common input issues:
 
 - Duplicate hotkey detection
-- Visual feedback when conflicts occur
+- Visual conflict warnings
+- Safer macro activation
 
-## Quality of Life
+---
 
-- Configuration automatically saved to an **INI file**
-- System tray integration with quick access
-- Tooltip and UI feedback for active actions
+# Quality of Life
+
+- Automatic configuration saving
+- Profile‑based macro organization
+- System tray integration
+- Tooltip and UI feedback for actions
+- Easy hotkey editing from the GUI
 
 ---
 
@@ -77,55 +114,51 @@ environment.)_
 
 # Requirements
 
-- **Windows**
-- **AutoHotkey v2**
+- Windows
+- AutoHotkey v2
 
-Download:
-
+Download AutoHotkey:
 https://www.autohotkey.com/v2/
 
 ---
 
 # Installation
 
-Install **AutoHotkey v2**
+Install AutoHotkey v2
 
 Clone or download the repository
 
-```bash
 git clone https://github.com/Navist/VRisingMacroManager.git
-```
 
 Run the script
 
-```bash
 V_Rising_Macro_Manager.ahk
-```
 
 ---
 
 # Configuration
 
-Macro bindings and settings are stored in:
+Macro settings are stored automatically.
 
-    vrising_macros.ini
+## Profile Structure
 
-The file is created automatically when the program runs for the first
-time.
+profiles/
+Default.ini
+PvP_Server.ini
+PvE_Server.ini
+
+The application remembers the last selected profile.
 
 ---
 
 # Intended Use
 
-This tool is designed to simplify repetitive chat commands and
-quality-of-life actions while playing **V Rising**, particularly on
-servers that utilize custom commands or modded functionality.
+This tool simplifies **repetitive chat commands and quality‑of‑life actions** while playing **V Rising**, particularly on servers with custom commands or modded functionality.
 
-It does **not automate gameplay mechanics** or interact directly with
-game memory.
+It **does not automate gameplay mechanics** or interact with game memory.
 
 ---
 
 # License
 
-This project is provided as-is for community use.
+This project is provided **as‑is for community use**.
